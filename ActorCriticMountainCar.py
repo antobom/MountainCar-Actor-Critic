@@ -3,15 +3,15 @@ import numpy as np
 from collections import deque
 import time
 import matplotlib.pyplot as plt
-from utils import display_mean_values
+#from utils import display_mean_values
 
 
 
 
 class Agent:
     def __init__(self, action_space, observation_space):
-        self.critic_step_size = 1e-2
-        self.actor_step_size = 1e-2
+        self.critic_step_size = 1e-1
+        self.actor_step_size = 1e-1
         self.avg_reward_step_size = 1e-6
         self.discount = 0.8
         
