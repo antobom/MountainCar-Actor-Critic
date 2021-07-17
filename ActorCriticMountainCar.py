@@ -84,13 +84,13 @@ def training_loop(agent:Agent, env:gym.Env, episodes:int, show_every:int=1000):
         state = agent.get_discrete_state(env.reset())
         
         action = agent.start(state)
-        new_state, reward, done, _ = env.step(action)
         while not done:
-            episode_reward+=reward
             new_state, reward, done, _ = env.step(action)
+            episode_reward+=reward
+
             new_state = agent.get_discrete_state(new_state)
             action = agent.step(new_state, reward)
-
+            
         if episode%show_every==0:
             print("episode: {} | mean reward: {}".format(episode, np.mean(train_reward))) 
     
@@ -104,14 +104,13 @@ def test_loop(agent:Agent, env:gym.Env, episodes:int):
         done=False
         episode_reward = 0
         state = agent.get_discrete_state(env.reset())
-        
         action = agent.start(state)
-        new_state, reward, done, _ = env.step(action)
         while not done:
-            episode_reward+=reward
             new_state, reward, done, _ = env.step(action)
+            episode_reward+=reward
             new_state = agent.get_discrete_state(new_state)
             action = agent.step(new_state, reward)
+
             env.render()
             time.sleep(0.05)
 

@@ -3,48 +3,74 @@ from keras import optimizers
 import numpy as np
 from collections import deque
 import time
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from collections import deque
 
 from keras.models import Sequential, load_model
 from keras.optimizers import Adam
 from keras.layers import Dense, Input
-from tensorflow.python.keras.mixed_precision import policy,
+
+class ReplayBuffer:
+    def __init__(self, max_size, state_size, action_shape):
+        self.max_size = max_size
+        
+        self.previous_state_memory = np.zeros((self.max_size, state_size))
+        self.action_memory = np.zeros((self.max_size, action_shape), dtype=np.int8)
+        self.reward_memory = np.zeros((self.max_size))
+        self.state_memory = np.zeros((self.max_size, state_size))
+        self.terminal_memory = np.zeros((self.max_size), dtype=np.bool)
+        self.memory_cntr = 0
+
+    def store_transition(self, previous_state:np.ndarray, last_action:np.ndarray, reward:float, state:np.ndarray, done:bool):
+        indx = self.memory_cntr%self.max_size
+        self.previous_state_memory[indx] = previous_state
+        self.action_memory[indx] = last_action
+        self.reward_memory[indx] = reward
+        self.terminal_memory[indx] = done
+        
+        self.memory_cntr+=1
+
+    def sample_buffer(self, batch_size):
+        batch_size = min(batch_size, self.max_size)
+        batch = np.random.choice(self.max_size, batch_size)
+
+        previous_states = self.previous_state_memory[batch]
+        last_actions = self.action_memory[batch]
+        rewards = self.reward_memory[batch]
+        states = self.state_memory[batch]
+        terminal = self.terminal_memory[batch]
+
+        return previous_states, last_actions, rewards, states, terminal
+
+class DeepQAgent:
+    def __init__(self, name, action_space, observation_space, epsilon, epsilon_decay, epsilon_end, discount, batch_size, learning_rate):
+        
+        self.name = name
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.epsilon_end = epsilon_end
 
 
-class Agent:
-    def __init__(self, action_space, observation_space):
-        self.critic_step_size = 1e-1
-        self.step_size = 1e-1
-        self.epsilon = 1e-2
+        self.discount = discount
 
-        self.discount = 0.8
-
-        self.batch_size = 64
+        self.batch_size = batch_size
         
         self.action_space = action_space
         self.observation_space = observation_space
 
-        self.discrete_obs_space_size = [20] * len(observation_space.high)
-        self.discrete_os_win_size = (observation_space.high - observation_space.low) / self.discrete_obs_space_size
+        self.memory = ReplayBuffer(1000, len(self.observation_space.low), 1)
 
-        
-        self.actor_weights = np.zeros((self.discrete_obs_space_size + [action_space.n]))
-        self.critic_weights = np.zeros(self.discrete_obs_space_size)
-        self.avg_reward = 0
+        self.init_model(learning_rate)
 
-        self.memory = deque(maxlen=1e6)
-
-        self.init_model()
-
-    def init_model(self):
+    def init_model(self, lr):
         self.q_eval = Sequential()
-        self.q_eval.add( Input(len(self.observation_space.low)) )
-        self.q_eval.add( Dense(64, activation='relu') )
-        self.q_eval.add( Dense(32, activation='relu') )
+        self.q_eval.add( Input( (len(self.observation_space.low), ) ) )
+        self.q_eval.add( Dense(256,activation='relu') )
+        self.q_eval.add( Dense(128, activation='relu') )
         self.q_eval.add( Dense(self.action_space.n) )
         
-        self.q_eval.compile(optimizer=Adam(lr=1e-2), loss='mse')
+        self.q_eval.compile(optimizer=Adam(lr=lr), loss='mse')
+        print(self.q_eval.summary())
 
     def get_discrete_state(self, state:np.ndarray)->tuple:
         discrete_state = (state - self.observation_space.low) / self.discrete_os_win_size
@@ -60,48 +86,79 @@ class Agent:
             return num/den
 
     def policy(self, state:tuple)->int:
-        state = self.get_discrete_state(state)
+        # state = self.get_discrete_state(state)
         if np.random.random()>self.epsilon:
-            action = np.argmax(self.q_eval.predict(state))
+            action = np.argmax(self.q_eval.predict(np.array([state])))
         else:
             action = np.random.choice(np.arange(0,self.action_space.n))
         return action
 
-    def start(self, state):
+    def start(self, state) -> int:
         self.last_action = self.policy(state)
         self.last_state  = state
+        return self.last_action
 
     def step(self, state:np.ndarray, reward:float, done:bool):
-        self.memory.append((self.last_state, self.last_action, reward, state, done))
-        action = policy(state)
+        self.memory.store_transition(self.last_state, self.last_action, reward, state, done)
+        action = self.policy(state)
         
         self.last_state = state
         self.last_action = action
         return action
 
-    def sample_buffer(self, batch_size)->tuple:
-        last_state, last_action, reward, state, done = [],[],[],[],[] 
-        for i in range(batch_size):
-            indx = np.random.randint(self.memory.maxlen)
-            last_state.append(self.memory[indx][0])
-            last_action.append(self.memory[indx][1])
-            reward.append(self.memory[indx][2])
-            state.append(self.memory[indx][3])
-            done.append(self.memory[indx][4])
-        return np.array(last_state), np.array(last_action), np.array(reward), np.array(state), np.array(done)
-
     def learn(self):
-        if len(self.sample_buffer)>=self.sample_buffer.maxlen:
-            
-            last_state, last_action, reward, state, done = self.sample_buffer(self.batch_size)
-            
-            state_action_value = self.q_eval.predict(self.last_state)
-            next_state_action_value = self.q_eval.predict(state)
-            
-            state_action_value_target = state_action_value.copy()
+        if self.memory.memory_cntr>self.memory.max_size:
+            last_states, last_actions, reward, state, done =\
+                self.memory.sample_buffer(self.batch_size)
 
-            batch_index = np.arange(self.batch_size, dtype=np.int32)
-            state_action_value_target[batch_index, action]
+            action_values = self.q_eval.predict(last_states)
+            next_action_values = self.q_eval.predict(state)
+
+            target = action_values.copy()
+            state_index = np.arange(self.batch_size, dtype=np.int8)
+
+            # print(state_index)
+            # print(last_actions)
+            target[state_index, last_actions] = reward + self.discount*np.max(next_action_values, axis=1)
+            self.q_eval.fit(last_states, target, verbose=0)
+
+            self.epsilon = self.epsilon*self.epsilon_decay if self.epsilon>self.epsilon_end else self.epsilon_end
+    def save_model(self, path:str):
+        self.q_eval.save(path)
 
 
+def training_loop(agent:DeepQAgent, env:gym.Env, episodes:int, show_every=1000):
+    train_reward = deque(maxlen=1000)
+    for episode in range(1, episodes):
+        done = False
+        episode_reward = 0
+        action = agent.start(env.reset())
+        while not done:
+            
+            new_state, reward, done, _ = env.step(action)
+            episode_reward+=reward
+            action = agent.step(new_state, reward, done)
+
+            agent.learn()
+            # env.render()
+
+        train_reward.append(episode_reward)
+        if episode%show_every==0:
+            mean_reward = np.mean(train_reward)
+            print("agent: {} | episode: {} | mean reward: {} | epsilon: {}".format(agent.name, episode, mean_reward, agent.epsilon))
+            if np.mean(mean_reward>-150):
+                pass
+                agent.save_model(f"models/model_{agent.name}_{episode}.h5")
+            
     
+
+    return agent, train_reward
+
+
+if __name__ == "__main__":
+    env = gym.make("MountainCar-v0")
+    agent = DeepQAgent(name = "agent1", action_space=env.action_space, observation_space=env.observation_space, \
+    epsilon=5e-1, epsilon_decay=0.999, epsilon_end=1e-3, discount=0.8, batch_size=64, learning_rate=1e-1)
+
+    training_loop(agent, env, episodes=1000, show_every=2)
+
