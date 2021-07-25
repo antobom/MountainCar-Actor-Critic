@@ -16,7 +16,7 @@ class ReplayBuffer:
         
         self.previous_state_memory = np.zeros((self.max_size, state_size))
         self.action_memory = np.zeros((self.max_size, action_shape), dtype=np.int8)
-        self.reward_memory = np.zeros((self.max_size))
+        self.reward_memory = np.ones((self.max_size))*2
         self.state_memory = np.zeros((self.max_size, state_size))
         self.terminal_memory = np.zeros((self.max_size), dtype=np.bool)
         self.memory_cntr = 0
@@ -24,6 +24,7 @@ class ReplayBuffer:
     def store_transition(self, previous_state:np.ndarray, last_action:np.ndarray, reward:float, state:np.ndarray, done:bool):
         indx = self.memory_cntr%self.max_size
         self.previous_state_memory[indx] = previous_state
+        self.state_memory[indx] = state
         self.action_memory[indx] = last_action
         self.reward_memory[indx] = reward
         self.terminal_memory[indx] = done
@@ -45,7 +46,7 @@ class ReplayBuffer:
         return previous_states, last_actions, rewards, states, terminal
 
 class DeepQAgent:
-    def __init__(self, name, action_space, observation_space, epsilon, epsilon_decay, epsilon_end, discount, batch_size, learning_rate, memory_size=1000_000):
+    def __init__(self, name, action_space, observation_space, epsilon, epsilon_decay, epsilon_end, discount, batch_size, learning_rate, memory_size=50_000):
         
         self.name = name
         self.epsilon = epsilon
@@ -159,7 +160,7 @@ def training_loop(agent:DeepQAgent, env:gym.Env, episodes:int, show_every=1):
 if __name__ == "__main__":
     env = gym.make("MountainCar-v0")
     agent = DeepQAgent(name = "agent2", action_space=env.action_space, observation_space=env.observation_space, \
-    epsilon=1, epsilon_decay=0.996, epsilon_end=1e-2, discount=0.99, batch_size=1024, learning_rate=5e-3)
+    epsilon=1, epsilon_decay=0.996, epsilon_end=1e-2, discount=0.99, batch_size=64, learning_rate=5e-1)
 
     training_loop(agent, env, episodes=500, show_every=1)
     
