@@ -10,21 +10,28 @@ from keras.models import Sequential, load_model
 from keras.optimizers import Adam
 from keras.layers import Dense, Input
 
+from plotter import Plotter
+
+
 class ReplayBuffer:
     def __init__(self, max_size, state_size, action_shape):
         self.max_size = max_size
         
         self.previous_state_memory = np.zeros((self.max_size, state_size))
-        self.action_memory = np.zeros((self.max_size, action_shape), dtype=np.int8)
-        self.reward_memory = np.ones((self.max_size))*2
         self.state_memory = np.zeros((self.max_size, state_size))
+
+        self.action_memory = np.zeros((self.max_size, action_shape), dtype=np.int8)
+        self.reward_memory = np.zeros((self.max_size))
         self.terminal_memory = np.zeros((self.max_size), dtype=np.bool)
+
         self.memory_cntr = 0
 
     def store_transition(self, previous_state:np.ndarray, last_action:np.ndarray, reward:float, state:np.ndarray, done:bool):
         indx = self.memory_cntr%self.max_size
+
         self.previous_state_memory[indx] = previous_state
         self.state_memory[indx] = state
+        
         self.action_memory[indx] = last_action
         self.reward_memory[indx] = reward
         self.terminal_memory[indx] = done
@@ -33,9 +40,10 @@ class ReplayBuffer:
 
     def sample_buffer(self, batch_size):
         batch_size = min(batch_size, self.max_size)
+        indexes = min(self.memory_cntr, self.max_size)
         # current_size = min(self.memory_cntr, self.max_size)
 
-        batch = np.random.choice(self.max_size, batch_size)
+        batch = np.random.choice(indexes, batch_size)
 
         previous_states = self.previous_state_memory[batch]
         last_actions = self.action_memory[batch]
@@ -46,7 +54,8 @@ class ReplayBuffer:
         return previous_states, last_actions, rewards, states, terminal
 
 class DeepQAgent:
-    def __init__(self, name, action_space, observation_space, epsilon, epsilon_decay, epsilon_end, discount, batch_size, learning_rate, memory_size=50_000):
+    def __init__(self, name, action_space, observation_space, epsilon, epsilon_decay, epsilon_end, discount, batch_size, learning_rate,\
+                memory_size=2_000, train_start=500):
         
         self.name = name
         self.epsilon = epsilon
@@ -60,7 +69,7 @@ class DeepQAgent:
         self.action_space = action_space
         self.observation_space = observation_space
         self.memory_size = memory_size
-
+        self.train_start = train_start
         self.memory = ReplayBuffer(self.memory_size, len(self.observation_space.low), 1)
 
         self.init_model(learning_rate)
@@ -68,8 +77,9 @@ class DeepQAgent:
     def init_model(self, lr):
         self.q_eval = Sequential()
         self.q_eval.add( Input( (len(self.observation_space.low), ) ) )
-        self.q_eval.add( Dense(256,activation='relu') )
-        self.q_eval.add( Dense(128, activation='relu') )
+        self.q_eval.add( Dense(516, activation='relu') )
+        self.q_eval.add( Dense(256, activation='relu') )
+        self.q_eval.add( Dense(64, activation='relu') )
         self.q_eval.add( Dense(self.action_space.n) )
         
         self.q_eval.compile(optimizer=Adam(lr=lr), loss='mse')
@@ -110,17 +120,17 @@ class DeepQAgent:
         return action
 
     def learn(self):
-        if self.memory.memory_cntr>self.batch_size:
-            last_states, last_actions, reward, state, done = self.memory.sample_buffer(self.batch_size)
+        if self.memory.memory_cntr>self.train_start:
+            last_states, last_actions, reward, states, done = self.memory.sample_buffer(self.batch_size)
 
-            action_values = self.q_eval.predict(last_states)
-            next_action_values = self.q_eval.predict(state)
+            target = self.q_eval.predict(last_states)
+            next_target = self.q_eval.predict(states)
 
-            target = action_values.copy()
             state_index = np.arange(self.batch_size, dtype=np.int8)
 
             # target[state_index, last_actions] = reward + ( self.discount*np.max(next_action_values, axis=1) - action_values[state_index, last_actions] ) * (1-done)
-            target[state_index, last_actions] = reward + self.discount*np.max(next_action_values, axis=1) * (1-done)
+            target[state_index, last_actions[state_index, 0]] = reward + self.discount*np.max(next_target, axis=1) * (1-done)
+            
             
             self.q_eval.fit(last_states, target, verbose=0)
 
@@ -129,9 +139,10 @@ class DeepQAgent:
     def save_model(self, path:str):
         self.q_eval.save(path)
 
-
 def training_loop(agent:DeepQAgent, env:gym.Env, episodes:int, show_every=1):
     train_reward = deque(maxlen=600)
+    plotter = Plotter(5)
+
     for episode in range(1, episodes):
         done = False
         episode_reward = 0
@@ -143,13 +154,16 @@ def training_loop(agent:DeepQAgent, env:gym.Env, episodes:int, show_every=1):
             action = agent.step(new_state, reward, done)
 
             agent.learn()
-            env.render()
+            # env.render()
 
         train_reward.append(episode_reward)
         if episode%show_every==0:
             mean_reward = np.mean(train_reward)
-            print("agent: {} | episode: {:3d} | episode_reward: {:5d} | mean reward: {:4.4f} | epsilon: {:3.3f}".format(agent.name, episode, int(episode_reward), mean_reward, agent.epsilon))
-            if np.mean(episode_reward>-150) and episode%50:
+            print("agent: {} | episode: {:3d} | episode_reward: {:5d} | mean reward: {:4.4f} | epsilon: {:3.3f} | mem_counter: {}".format(\
+                agent.name, episode, int(episode_reward), mean_reward, agent.epsilon, agent.memory.memory_cntr))
+            plotter.update_plot(episode_reward)
+            
+            if np.mean(episode_reward>450) and episode%50:
                 agent.save_model(f"models/model_{agent.name}_{episode}.h5")
     agent.save_model(f"models/model_{agent.name}_{0}.h5")
     
@@ -159,9 +173,8 @@ def training_loop(agent:DeepQAgent, env:gym.Env, episodes:int, show_every=1):
 
 if __name__ == "__main__":
     env = gym.make("MountainCar-v0")
-    agent = DeepQAgent(name = "agent2", action_space=env.action_space, observation_space=env.observation_space, \
-    epsilon=1, epsilon_decay=0.996, epsilon_end=1e-2, discount=0.99, batch_size=64, learning_rate=5e-1)
+    agent = DeepQAgent(name = "agent1", action_space=env.action_space, observation_space=env.observation_space, \
+    epsilon=1, epsilon_decay=0.999, epsilon_end=1e-3, discount=0.99, batch_size=64, learning_rate=5e-3, memory_size=1000_000, train_start=10000)
 
     training_loop(agent, env, episodes=500, show_every=1)
     
-

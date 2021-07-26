@@ -3,6 +3,7 @@ import numpy as np
 from collections import deque
 import time
 import matplotlib.pyplot as plt
+from plotter import Plotter
 #from utils import display_mean_values
 
 
@@ -76,7 +77,8 @@ class Agent:
 
 
 def training_loop(agent:Agent, env:gym.Env, episodes:int, show_every:int=1000):
-    train_reward = deque(maxlen=500)
+    train_reward = deque(maxlen=200)
+    plotter = Plotter(5)
     for episode in range(1, episodes):
 
         done=False
@@ -92,8 +94,8 @@ def training_loop(agent:Agent, env:gym.Env, episodes:int, show_every:int=1000):
             action = agent.step(new_state, reward)
             
         if episode%show_every==0:
-            print("episode: {} | mean reward: {}".format(episode, np.mean(train_reward))) 
-    
+            print("episode: {:4d} | episode reward: {:5.5f} | mean reward: {:5.5f}".format(episode,episode_reward,  np.mean(train_reward))) 
+            plotter.update_plot(episode_reward)
         train_reward.append(episode_reward)
     return agent, train_reward
 
